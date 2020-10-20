@@ -1,59 +1,25 @@
-mod error;
-use error::SmoothdError;
+mod models;
+use models::ScrapeTarget;
 
-use hyper::{Client, Uri};
-
-struct Target {
-    endpoint: Uri,
-    scrape_interval: u64,
-}
+use hyper::body::HttpBody as _;
+use hyper::Client;
+use tokio::io::{stdout, AsyncWriteExt as _};
 
 #[tokio::main]
-async fn main() {
-    let client = Client::new();
-
-    let url: Uri = "http://httpbin.org/response-headers?foo=bar"
-        .parse()
-        .unwrap();
-    assert_eq!(url.query(), Some("foo=bar"));
-
-    match client.get(url).await {
-        Ok(res) => println!("Response: {}", res.status()),
-        Err(err) => println!("Error: {}", err),
-    }
-}
-
-use tokio::time;
-
-type Result<T, E = SmoothdError> = std::result::Result<T, E>;
-
-pub async fn scrape(target: Target) -> Option<SmoothdError> {
-    let mut count = 0;
-    loop {
-        let res = reqwest::get(target.endpoint).await?;
-        let body = res.text().await?;
-        println!("Count:\n{}", count);
-        // println!("Body:\n{}", body);
-
-        count = count + 1;
-
-        let mut interval = time::interval(time::Duration::from_secs(target.scrape_interval));
-        interval.tick().await;
-    }
-}
-
-#[tokio::main]
-pub async fn main() -> Result<()> {
-    // TODO: Gets configuration from environment file
-    let targets: Vec<Target> = vec![Target {
-        endpoint: "http://localhost:9100/metrics".parse()?,
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let scrape_targets: Vec<ScrapeTarget> = vec![ScrapeTarget {
+        uri: "http://localhost:9100/metrics".parse().unwrap(),
         scrape_interval: 5,
     }];
 
-    for target in &targets {
-        let res = reqwest::get(target.endpoint).await?;
-        let body = res.text().await?;
-        println!("Body:\n{}", body);
+    let client = Client::new();
+
+    for scrape_target in scrape_targets {
+        let mut resp = client.get(scrape_target.uri).await?;
+
+        while let Some(chunk) = resp.body_mut().data().await {
+            stdout().write_all(&chunk?).await?;
+        }
     }
     Ok(())
 }
